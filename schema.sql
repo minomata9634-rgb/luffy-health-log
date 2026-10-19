@@ -1,13 +1,13 @@
 -- Run this entire file in Supabase SQL Editor.
 -- This app uses Supabase Auth + Postgres. Create two Auth users in
--- Authentication > Users, one for Miyu and one for Partner.
+-- Authentication > Users, one for Miyu and one for Eli.
 
 create table if not exists public.fluid_records (
   id uuid primary key default gen_random_uuid(),
   record_date date not null,
   amount_ml numeric not null check (amount_ml >= 0),
   performed_time time,
-  performed_by text not null check (performed_by in ('Miyu','Partner')),
+  performed_by text not null check (performed_by in ('Miyu','Eli')),
   note text,
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now(),

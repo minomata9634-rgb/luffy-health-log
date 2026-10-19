@@ -1,0 +1,118 @@
+const { createClient } = window.supabase;
+const sb = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+let state = { fluid:[], visits:[], blood:[], settings:null };
+let charts = {};
+const today = () => new Date().toISOString().slice(0,10);
+const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}) : "—";
+const esc = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
+const num = v => v==null || v==="" ? null : Number(v);
+function qs(id){return document.getElementById(id)}
+
+async function init(){
+  qs("fluidDate").value=today(); qs("fluidTime").value=new Date().toTimeString().slice(0,5);
+  const {data:{session}}=await sb.auth.getSession();
+  if(session) showApp(); else showLogin();
+  sb.auth.onAuthStateChange((_e,s)=>s?showApp():showLogin());
+}
+function showLogin(){qs("login").classList.remove("hidden");qs("main").classList.add("hidden");qs("nav").classList.add("hidden");qs("logoutBtn").classList.add("hidden")}
+async function showApp(){qs("login").classList.add("hidden");qs("main").classList.remove("hidden");qs("nav").classList.remove("hidden");qs("logoutBtn").classList.remove("hidden");await loadAll();renderAll()}
+
+async function loadAll(){
+  const [f,v,b,s]=await Promise.all([
+    sb.from("fluid_records").select("*").order("record_date",{ascending:false}).order("created_at",{ascending:false}),
+    sb.from("vet_visits").select("*").order("visit_date",{ascending:false}),
+    sb.from("blood_tests").select("*").order("test_date",{ascending:false}),
+    sb.from("app_settings").select("*").eq("id",1).maybeSingle()
+  ]);
+  if(f.error||v.error||b.error||s.error) throw new Error((f.error||v.error||b.error||s.error).message);
+  state={fluid:f.data||[],visits:v.data||[],blood:b.data||[],settings:s.data||{}};
+}
+function latest(arr,dateKey){return arr.slice().sort((a,b)=>String(b[dateKey]).localeCompare(String(a[dateKey])));}
+function previous(arr,dateKey){const a=latest(arr,dateKey);return a[1]||null}
+function diff(a,b){return a==null||b==null?null:a-b}
+function renderAll(){renderHome();renderFluid();renderHospital();renderHistory();renderCharts()}
+function renderHome(){
+  const f=state.fluid.find(x=>x.record_date===today());
+  qs("todayFluid").textContent=f?f.amount_ml:"—";
+  qs("todayStatus").textContent=f?"Recorded":"Not recorded";
+  qs("todayBy").textContent=f?`Performed by ${f.performed_by}${f.performed_time?" at "+f.performed_time:""}`:"";
+  qs("todayBtn").textContent=f?"Edit today's fluid":"Record today's fluid";
+  const vs=latest(state.visits,"visit_date"), bs=latest(state.blood,"test_date");
+  const lv=vs[0],pv=vs[1],lb=bs[0],pb=bs[1];
+  qs("latestWeight").textContent=lv?.weight_kg??"—";qs("prevWeight").textContent=pv?.weight_kg??"—";
+  qs("latestCrea").textContent=lb?.crea??"—";qs("prevCrea").textContent=pb?.crea??"—";
+  qs("latestBun").textContent=lb?.bun??"—";qs("prevBun").textContent=pb?.bun??"—";
+  qs("nextVisit").textContent=fmtDate(state.settings?.next_vet_date);qs("nextBlood").textContent=fmtDate(state.settings?.next_blood_date);
+  const notices=[];
+  if(lv&&pv&&Math.abs(diff(num(lv.weight_kg),num(pv.weight_kg)))>=num(state.settings?.weight_change_threshold??.2)) notices.push("Weight changed from the previous record.");
+  if(lb&&pb&&Math.abs(diff(num(lb.crea),num(pb.crea)))>=num(state.settings?.crea_change_threshold??.5)) notices.push("CREA changed from the previous record.");
+  if(lb&&pb&&Math.abs(diff(num(lb.bun),num(pb.bun)))>=num(state.settings?.bun_change_threshold??10)) notices.push("BUN changed from the previous record.");
+  const recent=latest(state.fluid,"record_date").slice(0,7).map(x=>num(x.amount_ml)).filter(x=>x!=null);
+  if(recent.length>=3){const avg=recent.reduce((a,b)=>a+b,0)/recent.length;if(f&&Math.abs(num(f.amount_ml)-avg)>=num(state.settings?.fluid_change_threshold??30)) notices.push("Today's fluid amount differs from the recent average.");}
+  qs("changeBanner").innerHTML=notices.length?`<strong>Changes to note</strong><br>${notices.map(esc).join("<br>")}`:"";
+  qs("changeBanner").classList.toggle("hidden",!notices.length);
+}
+function recordHtml(type,x,dateKey,details){
+  return `<div class="record"><div class="record-head"><div><div class="record-title">${esc(details)}</div><div class="record-meta">${fmtDate(x[dateKey])} · entered by ${esc(x.performed_by||x.entered_by||"user")}</div></div></div>${x.note?`<div class="record-note">${esc(x.note)}</div>`:""}<div class="record-actions"><button class="secondary" onclick="editRecord('${type}','${x.id}')">Edit</button><button class="secondary" onclick="deleteRecord('${type}','${x.id}')">Delete</button></div></div>`;
+}
+function renderFluid(){qs("fluidList").innerHTML=state.fluid.slice(0,20).map(x=>recordHtml("fluid",x,"record_date",`${x.amount_ml} ml${x.performed_time?" · "+x.performed_time:""}`)).join("")||'<div class="muted">No fluid records yet.</div>'}
+function renderHospital(){
+  qs("hospitalList").innerHTML=latest(state.visits,"visit_date").map(x=>recordHtml("visit",x,"visit_date",`Weight: ${x.weight_kg??"—"} kg`)+
+    (state.blood.find(b=>b.test_date===x.visit_date)?`<div class="record" style="margin:8px 0 0 14px"><div class="record-title">Blood test</div><div class="record-meta">CREA ${state.blood.find(b=>b.test_date===x.visit_date)?.crea??"—"} · BUN ${state.blood.find(b=>b.test_date===x.visit_date)?.bun??"—"}</div></div>`:"")).join("")||'<div class="muted">No hospital records yet.</div>';
+  qs("scheduleVisit").value=state.settings?.next_vet_date||"";qs("scheduleBlood").value=state.settings?.next_blood_date||"";
+}
+function renderHistory(){
+  const dates=[...new Set([...state.fluid.map(x=>x.record_date),...state.visits.map(x=>x.visit_date),...state.blood.map(x=>x.test_date)])].sort().reverse();
+  qs("historyList").innerHTML=dates.map(d=>{
+    const f=state.fluid.find(x=>x.record_date===d),v=state.visits.find(x=>x.visit_date===d),b=state.blood.find(x=>x.test_date===d);
+    return `<div class="record"><div class="record-head"><div class="record-title">${fmtDate(d)}</div></div>${f?`<div>${f.amount_ml} ml fluid</div>`:""}${v?`<div>Weight: ${v.weight_kg??"—"} kg</div>`:""}${b?`<div>CREA: ${b.crea??"—"} · BUN: ${b.bun??"—"}</div>`:""}${(f?.note||v?.note||b?.note)?`<div class="record-note">${esc(f?.note||v?.note||b?.note)}</div>`:""}<div class="record-meta">Input history is retained in each individual record.</div></div>`;
+  }).join("")||'<div class="muted">No records yet.</div>';
+}
+function filtered(arr,dateKey,months){if(months==="all")return arr;const cutoff=new Date();cutoff.setMonth(cutoff.getMonth()-Number(months));return arr.filter(x=>new Date(x[dateKey])>=cutoff)}
+function makeChart(id,label,arr,dateKey,valueKey,months){
+  if(charts[id])charts[id].destroy();
+  const data=filtered(latest(arr,dateKey),dateKey,months).reverse();
+  charts[id]=new Chart(qs(id),{type:"line",data:{labels:data.map(x=>fmtDate(x[dateKey])),datasets:[{label,data:data.map(x=>x[valueKey]),tension:.25,spanGaps:true}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:false}}}});
+}
+function renderCharts(months=document.querySelector(".range-tabs .selected")?.dataset.range||"all"){
+  makeChart("weightChart","Weight",state.visits,"visit_date","weight_kg",months);
+  makeChart("creaChart","CREA",state.blood,"test_date","crea",months);
+  makeChart("bunChart","BUN",state.blood,"test_date","bun",months);
+  makeChart("fluidChart","Fluid",state.fluid,"record_date","amount_ml",months);
+}
+function go(page){document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));qs("page-"+page).classList.add("active");document.querySelectorAll(".bottom-nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===page));window.scrollTo(0,0)}
+async function save(table,id,payload){
+  const user=(await sb.auth.getUser()).data.user;
+  payload.created_by=user.id;
+  const q=id?sb.from(table).update(payload).eq("id",id):sb.from(table).insert(payload);
+  const {error}=await q;if(error)throw error;await loadAll();renderAll();
+}
+window.editRecord=async(type,id)=>{
+  const map={fluid:[state.fluid,"fluidForm"],visit:[state.visits,"visitForm"],blood:[state.blood,"bloodForm"]};const [arr]=map[type];const x=arr.find(r=>r.id===id);if(!x)return;
+  if(type==="fluid"){qs("visitId").value="";qs("fluidDate").value=x.record_date;qs("fluidAmount").value=x.amount_ml;qs("fluidTime").value=x.performed_time||"";qs("fluidBy").value=x.performed_by;qs("fluidNote").value=x.note||"";qs("fluidForm").dataset.id=id;go("today")}
+  if(type==="visit"){qs("visitId").value=id;qs("visitDate").value=x.visit_date;qs("visitWeight").value=x.weight_kg??"";qs("visitNote").value=x.note||"";go("hospital")}
+  if(type==="blood"){qs("bloodId").value=id;qs("bloodDate").value=x.test_date;qs("bloodCrea").value=x.crea??"";qs("bloodBun").value=x.bun??"";qs("bloodNote").value=x.note||"";go("hospital")}
+};
+window.deleteRecord=async(type,id)=>{
+  if(!confirm("Delete this record?"))return;const table={fluid:"fluid_records",visit:"vet_visits",blood:"blood_tests"}[type];const {error}=await sb.from(table).delete().eq("id",id);if(error)alert(error.message);else{await loadAll();renderAll()}
+};
+
+qs("loginForm").onsubmit=async e=>{e.preventDefault();qs("loginError").textContent="";const {error}=await sb.auth.signInWithPassword({email:qs("email").value,password:qs("password").value});if(error)qs("loginError").textContent=error.message};
+qs("logoutBtn").onclick=()=>sb.auth.signOut();
+qs("todayBtn").onclick=()=>{const f=state.fluid.find(x=>x.record_date===today());if(f)editRecord("fluid",f.id);else go("today")};
+qs("fluidForm").onsubmit=async e=>{e.preventDefault();try{await save("fluid_records",e.target.dataset.id||null,{record_date:qs("fluidDate").value,amount_ml:num(qs("fluidAmount").value),performed_time:qs("fluidTime").value||null,performed_by:qs("fluidBy").value,note:qs("fluidNote").value||null});e.target.reset();qs("fluidDate").value=today();qs("fluidTime").value=new Date().toTimeString().slice(0,5);delete e.target.dataset.id;go("home")}catch(err){alert(err.message)}};
+qs("visitForm").onsubmit=async e=>{e.preventDefault();try{await save("vet_visits",qs("visitId").value||null,{visit_date:qs("visitDate").value,weight_kg:num(qs("visitWeight").value),note:qs("visitNote").value||null});e.target.reset();qs("visitId").value="";go("hospital")}catch(err){alert(err.message)}};
+qs("bloodForm").onsubmit=async e=>{e.preventDefault();try{await save("blood_tests",qs("bloodId").value||null,{test_date:qs("bloodDate").value,crea:num(qs("bloodCrea").value),bun:num(qs("bloodBun").value),note:qs("bloodNote").value||null});e.target.reset();qs("bloodId").value="";go("hospital")}catch(err){alert(err.message)}};
+qs("fluidCancel").onclick=()=>go("home");qs("visitCancel").onclick=()=>{qs("visitForm").reset();qs("visitId").value="";go("hospital")};qs("bloodCancel").onclick=()=>{qs("bloodForm").reset();qs("bloodId").value="";go("hospital")};
+qs("saveSchedule").onclick=async()=>{const {data:{user}}=await sb.auth.getUser();const {error}=await sb.from("app_settings").upsert({id:1,next_vet_date:qs("scheduleVisit").value||null,next_blood_date:qs("scheduleBlood").value||null,updated_by:user.id,updated_at:new Date().toISOString()});if(error)alert(error.message);else{await loadAll();renderAll()}};
+document.querySelectorAll(".bottom-nav button,[data-page]").forEach(b=>b.onclick=()=>go(b.dataset.page));
+document.querySelectorAll(".range-tabs button").forEach(b=>b.onclick=()=>{document.querySelectorAll(".range-tabs button").forEach(x=>x.classList.remove("selected"));b.classList.add("selected");renderCharts(b.dataset.range)});
+qs("exportCsv").onclick=()=>{
+  const rows=[["date","fluid_ml","fluid_time","fluid_by","weight_kg","crea","bun","note"]];
+  const dates=[...new Set([...state.fluid.map(x=>x.record_date),...state.visits.map(x=>x.visit_date),...state.blood.map(x=>x.test_date)])].sort().reverse();
+  dates.forEach(d=>{const f=state.fluid.find(x=>x.record_date===d),v=state.visits.find(x=>x.visit_date===d),b=state.blood.find(x=>x.test_date===d);rows.push([d,f?.amount_ml??"",f?.performed_time??"",f?.performed_by??"",v?.weight_kg??"",b?.crea??"",b?.bun??"",f?.note||v?.note||b?.note||""])});
+  const csv=rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(",")).join("\n");
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv"}));a.download="luffy-health-backup.csv";a.click();
+};
+init().catch(e=>{qs("loginError").textContent=e.message});

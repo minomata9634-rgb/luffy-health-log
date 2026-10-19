@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#5f6f68">
+  <title>Luffy Health Log</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">PET HEALTH RECORD</div>
+      <h1>Luffy Health Log</h1>
+    </div>
+    <button id="logoutBtn" class="text-btn hidden">Log out</button>
+  </header>
+
+  <main id="main" class="hidden">
+    <section id="page-home" class="page active">
+      <div id="changeBanner" class="notice hidden"></div>
+      <div class="section-title">Today</div>
+      <div class="card hero-card">
+        <div class="big-label">Subcutaneous fluid</div>
+        <div class="big-number"><span id="todayFluid">—</span><small> ml</small></div>
+        <div id="todayStatus" class="status">Not recorded</div>
+        <div id="todayBy" class="muted"></div>
+        <button id="todayBtn" class="primary large">Record today's fluid</button>
+      </div>
+
+      <div class="section-title">Latest hospital data</div>
+      <div class="grid2">
+        <div class="card stat"><span>Latest weight</span><strong id="latestWeight">—</strong><small>kg</small></div>
+        <div class="card stat"><span>Previous weight</span><strong id="prevWeight">—</strong><small>kg</small></div>
+        <div class="card stat"><span>Latest CREA</span><strong id="latestCrea">—</strong></div>
+        <div class="card stat"><span>Previous CREA</span><strong id="prevCrea">—</strong></div>
+        <div class="card stat"><span>Latest BUN</span><strong id="latestBun">—</strong></div>
+        <div class="card stat"><span>Previous BUN</span><strong id="prevBun">—</strong></div>
+      </div>
+
+      <div class="card next-card">
+        <div><span>Next veterinary visit</span><strong id="nextVisit">Not set</strong></div>
+        <div><span>Next blood test</span><strong id="nextBlood">Not set</strong></div>
+        <button class="secondary" data-page="hospital">Edit schedule</button>
+      </div>
+    </section>
+
+    <section id="page-today" class="page">
+      <div class="section-title">Today's fluid record</div>
+      <div class="card">
+        <form id="fluidForm">
+          <label>Date<input id="fluidDate" type="date" required></label>
+          <label>Fluid amount (ml)<input id="fluidAmount" type="number" min="0" step="1" inputmode="decimal" placeholder="e.g. 100" required></label>
+          <label>Time<input id="fluidTime" type="time"></label>
+          <label>Performed by<select id="fluidBy"><option>Miyu</option><option>Partner</option></select></label>
+          <label>Note<textarea id="fluidNote" rows="3" placeholder="Optional"></textarea></label>
+          <div class="form-actions"><button type="submit" class="primary">Save</button><button type="button" id="fluidCancel" class="secondary">Cancel</button></div>
+        </form>
+      </div>
+      <div class="section-title">Recent fluid records</div>
+      <div id="fluidList"></div>
+    </section>
+
+    <section id="page-hospital" class="page">
+      <div class="section-title">Veterinary visit</div>
+      <div class="card">
+        <form id="visitForm">
+          <input id="visitId" type="hidden">
+          <label>Visit date<input id="visitDate" type="date" required></label>
+          <label>Weight (kg)<input id="visitWeight" type="number" min="0" step="0.001" inputmode="decimal"></label>
+          <label>Note<textarea id="visitNote" rows="3" placeholder="Optional"></textarea></label>
+          <div class="form-actions"><button type="submit" class="primary">Save visit</button><button type="button" id="visitCancel" class="secondary">Cancel</button></div>
+        </form>
+      </div>
+      <div class="section-title">Blood test</div>
+      <div class="card">
+        <form id="bloodForm">
+          <input id="bloodId" type="hidden">
+          <label>Test date<input id="bloodDate" type="date" required></label>
+          <label>CREA<input id="bloodCrea" type="number" min="0" step="0.01" inputmode="decimal"></label>
+          <label>BUN<input id="bloodBun" type="number" min="0" step="0.1" inputmode="decimal"></label>
+          <label>Note<textarea id="bloodNote" rows="3" placeholder="Optional"></textarea></label>
+          <div class="form-actions"><button type="submit" class="primary">Save blood test</button><button type="button" id="bloodCancel" class="secondary">Cancel</button></div>
+        </form>
+      </div>
+      <div class="section-title">Upcoming schedule</div>
+      <div class="card">
+        <label>Next veterinary visit<input id="scheduleVisit" type="date"></label>
+        <label>Next blood test<input id="scheduleBlood" type="date"></label>
+        <button id="saveSchedule" class="primary">Save schedule</button>
+      </div>
+      <div class="section-title">Hospital records</div>
+      <div id="hospitalList"></div>
+    </section>
+
+    <section id="page-charts" class="page">
+      <div class="section-title">Trends</div>
+      <div class="range-tabs">
+        <button data-range="1">1 month</button><button data-range="3">3 months</button><button data-range="6">6 months</button><button data-range="all" class="selected">All</button>
+      </div>
+      <div class="chart-card"><h3>Weight</h3><canvas id="weightChart"></canvas></div>
+      <div class="chart-card"><h3>CREA</h3><canvas id="creaChart"></canvas></div>
+      <div class="chart-card"><h3>BUN</h3><canvas id="bunChart"></canvas></div>
+      <div class="chart-card"><h3>Fluid amount</h3><canvas id="fluidChart"></canvas></div>
+      <div class="card small-note">Charts are for recording and visual comparison only. They do not provide medical diagnosis or treatment advice.</div>
+    </section>
+
+    <section id="page-history" class="page">
+      <div class="section-title">Record history</div>
+      <div id="historyList"></div>
+      <button id="exportCsv" class="secondary full">Export CSV backup</button>
+    </section>
+  </main>
+
+  <nav id="nav" class="bottom-nav hidden">
+    <button data-page="home" class="active">Home</button>
+    <button data-page="today">Today</button>
+    <button data-page="hospital">Hospital</button>
+    <button data-page="charts">Charts</button>
+    <button data-page="history">History</button>
+  </nav>
+
+  <div id="login" class="login">
+    <div class="login-box">
+      <div class="eyebrow">PET HEALTH RECORD</div>
+      <h2>Luffy Health Log</h2>
+      <p class="muted">Sign in to share the same records across two phones.</p>
+      <form id="loginForm">
+        <label>Email<input id="email" type="email" autocomplete="email" required></label>
+        <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary large" type="submit">Sign in</button>
+      </form>
+      <p id="loginError" class="error"></p>
+    </div>
+  </div>
+</div>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

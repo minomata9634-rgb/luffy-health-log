@@ -94,6 +94,16 @@
       </div>
       <div class="section-title">Hospital records</div>
       <div id="hospitalList"></div>
+
+      <div class="section-title">Import past records (CSV)</div>
+      <div class="card">
+        <p class="muted">Import historical veterinary visits and blood tests from a CSV file. Review the preview before saving. Fluid records are not imported.</p>
+        <button type="button" id="downloadImportTemplate" class="secondary full">Download CSV template</button>
+        <label>Choose CSV file<input id="importCsvFile" type="file" accept=".csv,text/csv"></label>
+        <div id="importStatus" class="muted" role="status" aria-live="polite"></div>
+        <div id="importPreview"></div>
+        <button type="button" id="importCsvSubmit" class="primary full" disabled>Import reviewed records</button>
+      </div>
     </section>
 
     <section id="page-charts" class="page">

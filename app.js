@@ -92,10 +92,6 @@ function renderHospital(){
   qs("scheduleBlood").value = state.settings?.next_blood_date || "";
 }
 
-  qs("hospitalList").innerHTML=latest(state.visits,"visit_date").map(x=>recordHtml("visit",x,"visit_date",`Weight: ${x.weight_kg??"—"} kg`)+
-    (state.blood.find(b=>b.test_date===x.visit_date)?`<div class="record" style="margin:8px 0 0 14px"><div class="record-title">Blood test</div><div class="record-meta">CREA ${state.blood.find(b=>b.test_date===x.visit_date)?.crea??"—"} · BUN ${state.blood.find(b=>b.test_date===x.visit_date)?.bun??"—"}</div></div>`:"")).join("")||'<div class="muted">No hospital records yet.</div>';
-  qs("scheduleVisit").value=state.settings?.next_vet_date||"";qs("scheduleBlood").value=state.settings?.next_blood_date||"";
-}
 function renderHistory(){
   const dates=[...new Set([...state.fluid.map(x=>x.record_date),...state.visits.map(x=>x.visit_date),...state.blood.map(x=>x.test_date)])].sort().reverse();
   qs("historyList").innerHTML=dates.map(d=>{

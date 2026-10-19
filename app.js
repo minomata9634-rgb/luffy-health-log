@@ -100,17 +100,73 @@ function renderHistory(){
   }).join("")||'<div class="muted">No records yet.</div>';
 }
 function filtered(arr,dateKey,months){if(months==="all")return arr;const cutoff=new Date();cutoff.setMonth(cutoff.getMonth()-Number(months));return arr.filter(x=>new Date(x[dateKey])>=cutoff)}
-function makeChart(id,label,arr,dateKey,valueKey,months){
-  if(charts[id])charts[id].destroy();
-  const data=filtered(latest(arr,dateKey),dateKey,months).reverse();
-  charts[id]=new Chart(qs(id),{type:"line",data:{labels:data.map(x=>fmtDate(x[dateKey])),datasets:[{label,data:data.map(x=>x[valueKey]),tension:.25,spanGaps:true}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:false}}}});
+
+function makeChart(id, label, arr, dateKey, valueKey, months, allDates) {
+  if (charts[id]) charts[id].destroy();
+
+  const valuesByDate = new Map();
+
+  filtered(arr, dateKey, months).forEach(x => {
+    if (!valuesByDate.has(x[dateKey])) {
+      valuesByDate.set(x[dateKey], x[valueKey] == null ? null : Number(x[valueKey]));
+    }
+  });
+
+  charts[id] = new Chart(qs(id), {
+    type: "line",
+    data: {
+      labels: allDates,
+      datasets: [{
+        label,
+        data: allDates.map(date => valuesByDate.get(date) ?? null),
+        tension: 0.25,
+        spanGaps: true
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        x: {
+          ticks: {
+            autoSkip: true,
+            maxRotation: 45,
+            minRotation: 45
+          }
+        },
+        y: {
+          beginAtZero: false
+        }
+      }
+    }
+  });
 }
-function renderCharts(months=document.querySelector(".range-tabs .selected")?.dataset.range||"all"){
-  makeChart("weightChart","Weight",state.visits,"visit_date","weight_kg",months);
-  makeChart("creaChart","CREA",state.blood,"test_date","crea",months);
-  makeChart("bunChart","BUN",state.blood,"test_date","bun",months);
-  makeChart("fluidChart","Fluid",state.fluid,"record_date","amount_ml",months);
+
+function renderCharts(months = document.querySelector(".range-tabs .selected")?.dataset.range || "all") {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - (months === "all" ? 0 : Number(months)));
+
+  const allRecords = [
+    ...state.visits.map(x => x.visit_date),
+    ...state.blood.map(x => x.test_date),
+    ...state.fluid.map(x => x.record_date)
+  ];
+
+  const allDates = [...new Set(allRecords)]
+    .filter(date => {
+      if (months === "all") return true;
+      return new Date(date + "T00:00:00") >= cutoff;
+    })
+    .sort();
+
+  makeChart("weightChart", "Weight", state.visits, "visit_date", "weight_kg", months, allDates);
+  makeChart("creaChart", "CREA", state.blood, "test_date", "crea", months, allDates);
+  makeChart("bunChart", "BUN", state.blood, "test_date", "bun", months, allDates);
+  makeChart("fluidChart", "Fluid", state.fluid, "record_date", "amount_ml", months, allDates);
 }
+
 function go(page){document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));qs("page-"+page).classList.add("active");document.querySelectorAll(".bottom-nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===page));window.scrollTo(0,0)}
 async function save(table,id,payload){
   const user=(await sb.auth.getUser()).data.user;

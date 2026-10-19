@@ -57,7 +57,41 @@ function recordHtml(type,x,dateKey,details){
   return `<div class="record"><div class="record-head"><div><div class="record-title">${esc(details)}</div><div class="record-meta">${fmtDate(x[dateKey])} · entered by ${esc(x.performed_by||x.entered_by||"user")}</div></div></div>${x.note?`<div class="record-note">${esc(x.note)}</div>`:""}<div class="record-actions"><button class="secondary" onclick="editRecord('${type}','${x.id}')">Edit</button><button class="secondary" onclick="deleteRecord('${type}','${x.id}')">Delete</button></div></div>`;
 }
 function renderFluid(){qs("fluidList").innerHTML=state.fluid.slice(0,20).map(x=>recordHtml("fluid",x,"record_date",`${x.amount_ml} ml${x.performed_time?" · "+x.performed_time:""}`)).join("")||'<div class="muted">No fluid records yet.</div>'}
+
 function renderHospital(){
+  const visits = latest(state.visits, "visit_date");
+  const bloodTests = latest(state.blood, "test_date");
+
+  const visitHtml = visits.map(x =>
+    recordHtml(
+      "visit",
+      x,
+      "visit_date",
+      `Weight: ${x.weight_kg ?? "—"} kg`
+    )
+  ).join("");
+
+  const bloodHtml = bloodTests.map(x =>
+    recordHtml(
+      "blood",
+      x,
+      "test_date",
+      `Blood test · CREA ${x.crea ?? "—"} · BUN ${x.bun ?? "—"}`
+    )
+  ).join("");
+
+  qs("hospitalList").innerHTML = `
+    <h3 style="margin:16px 0 10px">Vet visits</h3>
+    ${visitHtml || '<div class="muted">No vet visits yet.</div>'}
+
+    <h3 style="margin:24px 0 10px">Blood tests</h3>
+    ${bloodHtml || '<div class="muted">No blood tests yet.</div>'}
+  `;
+
+  qs("scheduleVisit").value = state.settings?.next_vet_date || "";
+  qs("scheduleBlood").value = state.settings?.next_blood_date || "";
+}
+
   qs("hospitalList").innerHTML=latest(state.visits,"visit_date").map(x=>recordHtml("visit",x,"visit_date",`Weight: ${x.weight_kg??"—"} kg`)+
     (state.blood.find(b=>b.test_date===x.visit_date)?`<div class="record" style="margin:8px 0 0 14px"><div class="record-title">Blood test</div><div class="record-meta">CREA ${state.blood.find(b=>b.test_date===x.visit_date)?.crea??"—"} · BUN ${state.blood.find(b=>b.test_date===x.visit_date)?.bun??"—"}</div></div>`:"")).join("")||'<div class="muted">No hospital records yet.</div>';
   qs("scheduleVisit").value=state.settings?.next_vet_date||"";qs("scheduleBlood").value=state.settings?.next_blood_date||"";

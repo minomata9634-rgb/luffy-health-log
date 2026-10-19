@@ -145,4 +145,159 @@ qs("exportCsv").onclick=()=>{
   const csv=rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(",")).join("\n");
   const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv"}));a.download="luffy-health-backup.csv";a.click();
 };
+
+// CSV import for historical vet visits and blood tests only.
+let pendingCsvImport = [];
+
+function parseCsvText(text) {
+  const rows = [];
+  let row = [], field = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+    } else {
+      if (ch === '"' && field === "") quoted = true;
+      else if (ch === ",") { row.push(field); field = ""; }
+      else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+      else if (ch !== "\r") field += ch;
+    }
+  }
+  row.push(field);
+  if (row.some(v => String(v ?? "").trim() !== "")) rows.push(row);
+  return rows;
+}
+
+function csvCell(v) {
+  return '"' + String(v ?? "").replace(/"/g, '""') + '"';
+}
+
+function downloadCsvTemplate() {
+  const rows = [
+    ["date", "weight_kg", "crea", "bun", "note"],
+    ["2025-10-30", "3.85", "", "", "Historical vet visit"],
+    ["2025-11-06", "3.9", "3.0", "49", "Confirm CREA/BUN before import"]
+  ];
+  const csv = rows.map(r => r.map(csvCell).join(",")).join("\r\n");
+  const blobUrl = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = blobUrl; a.download = "luffy-health-import-template.csv"; a.click();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
+
+function validateCsvImport(text) {
+  const rows = parseCsvText(text);
+  if (rows.length < 2) throw new Error("CSV has no data rows.");
+  const headers = rows[0].map(h => h.trim().toLowerCase().replace(/^\ufeff/, ""));
+  const required = ["date", "weight_kg", "crea", "bun", "note"];
+  const missing = required.filter(h => !headers.includes(h));
+  if (missing.length) throw new Error("Missing columns: " + missing.join(", ") + ". Please use the template.");
+  const ix = Object.fromEntries(required.map(h => [h, headers.indexOf(h)]));
+  const parsed = [], errors = [];
+  rows.slice(1).forEach((r, i) => {
+    if (!r.some(v => String(v ?? "").trim() !== "")) return;
+    const line = i + 2;
+    const date = (r[ix.date] || "").trim();
+    const weightRaw = (r[ix.weight_kg] || "").trim();
+    const creaRaw = (r[ix.crea] || "").trim();
+    const bunRaw = (r[ix.bun] || "").trim();
+    const note = (r[ix.note] || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
+      errors.push(`Line ${line}: date must be YYYY-MM-DD.`); return;
+    }
+    const numeric = v => v === "" ? null : Number(v);
+    const weight = numeric(weightRaw), crea = numeric(creaRaw), bun = numeric(bunRaw);
+    if ((weightRaw && (!Number.isFinite(weight) || weight < 0)) ||
+        (creaRaw && (!Number.isFinite(crea) || crea < 0)) ||
+        (bunRaw && (!Number.isFinite(bun) || bun < 0))) {
+      errors.push(`Line ${line}: weight/CREA/BUN must be non-negative numbers or blank.`); return;
+    }
+    if (weight === null && crea === null && bun === null && !note) {
+      errors.push(`Line ${line}: no record values.`); return;
+    }
+    parsed.push({ date, weight, crea, bun, note, line });
+  });
+  if (errors.length) throw new Error(errors.join("\n"));
+  return parsed;
+}
+
+function renderCsvPreview(records) {
+  if (!records.length) { qs("importPreview").innerHTML = ""; return; }
+  const rows = records.map(r =>
+    `<tr><td>${esc(r.date)}</td><td>${r.weight ?? "—"}</td><td>${r.crea ?? "—"}</td><td>${r.bun ?? "—"}</td><td>${esc(r.note || "—")}</td></tr>`
+  ).join("");
+  qs("importPreview").innerHTML = `<p><strong>${records.length} rows ready to review</strong></p>
+    <div style="overflow-x:auto"><table class="import-preview-table">
+    <thead><tr><th>Date</th><th>Weight kg</th><th>CREA</th><th>BUN</th><th>Note</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+    <p class="muted">Rows with weight create vet visits. Rows with CREA and/or BUN create blood tests. Existing records on the same date are skipped per table.</p>`;
+}
+
+async function importCsvRecords() {
+  const status = qs("importStatus"), button = qs("importCsvSubmit");
+  if (!pendingCsvImport.length) return;
+  button.disabled = true;
+  status.textContent = "Importing records…";
+  try {
+    const { data: { user }, error: userError } = await sb.auth.getUser();
+    if (userError || !user) throw new Error("Please sign in again before importing.");
+    const visitDates = new Set(state.visits.map(v => v.visit_date));
+    const bloodDates = new Set(state.blood.map(b => b.test_date));
+    const visits = [], blood = [], skipped = [];
+    for (const r of pendingCsvImport) {
+      if (r.weight !== null) {
+        if (visitDates.has(r.date)) skipped.push("visit " + r.date);
+        else { visits.push({ visit_date: r.date, weight_kg: r.weight, note: r.note || null, created_by: user.id }); visitDates.add(r.date); }
+      }
+      if (r.crea !== null || r.bun !== null) {
+        if (bloodDates.has(r.date)) skipped.push("blood test " + r.date);
+        else { blood.push({ test_date: r.date, crea: r.crea, bun: r.bun, note: r.note || null, created_by: user.id }); bloodDates.add(r.date); }
+      }
+    }
+    if (!visits.length && !blood.length) {
+      status.textContent = "Nothing new to import. Existing records for these dates were skipped.";
+      return;
+    }
+    if (visits.length) {
+      const { error } = await sb.from("vet_visits").insert(visits);
+      if (error) throw error;
+    }
+    if (blood.length) {
+      const { error } = await sb.from("blood_tests").insert(blood);
+      if (error) throw error;
+    }
+    await loadAll(); renderAll();
+    status.textContent = `Import complete: ${visits.length} vet visits and ${blood.length} blood tests added.` +
+      (skipped.length ? ` Skipped existing records: ${skipped.length}.` : "");
+    pendingCsvImport = []; qs("importPreview").innerHTML = ""; qs("importCsvFile").value = "";
+  } catch (err) {
+    status.textContent = "Import failed: " + (err?.message || String(err));
+  } finally {
+    button.disabled = pendingCsvImport.length === 0;
+  }
+}
+
+function setupCsvImport() {
+  const fileInput = qs("importCsvFile"), templateButton = qs("downloadImportTemplate"), importButton = qs("importCsvSubmit");
+  if (!fileInput || !templateButton || !importButton) return;
+  templateButton.onclick = downloadCsvTemplate;
+  fileInput.onchange = async () => {
+    pendingCsvImport = []; importButton.disabled = true;
+    qs("importPreview").innerHTML = ""; qs("importStatus").textContent = "";
+    const file = fileInput.files?.[0]; if (!file) return;
+    try {
+      pendingCsvImport = validateCsvImport(await file.text());
+      renderCsvPreview(pendingCsvImport);
+      qs("importStatus").textContent = "Review the preview carefully before importing.";
+      importButton.disabled = pendingCsvImport.length === 0;
+    } catch (err) {
+      qs("importStatus").textContent = "CSV could not be read: " + (err?.message || String(err));
+    }
+  };
+  importButton.onclick = importCsvRecords;
+}
+setupCsvImport();
+
 init().catch(e=>{qs("loginError").textContent=e.message});
